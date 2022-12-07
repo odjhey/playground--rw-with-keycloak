@@ -1,4 +1,3 @@
-import type { Decoded } from '@redwoodjs/api'
 import { AuthenticationError, ForbiddenError } from '@redwoodjs/graphql-server'
 
 /**
@@ -18,16 +17,14 @@ import { AuthenticationError, ForbiddenError } from '@redwoodjs/graphql-server'
  * fields to the `select` object below once you've decided they are safe to be
  * seen if someone were to open the Web Inspector in their browser.
  */
-export const getCurrentUser = async (...args) => {
-  return { id: 'johncena' }
-
-  // console.log('---get current user', args)
-
-  // const session = undefined
+export const getCurrentUser = async (session, tokenDefinition, ...args) => {
+  console.log('---get current user', session, args)
 
   // if (!session || typeof session.id !== 'number') {
   //   throw new Error('Invalid session')
   // }
+
+  return { id: tokenDefinition.token }
 
   // return undefined
 

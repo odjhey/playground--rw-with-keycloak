@@ -321,6 +321,35 @@ const getAuthMethod = (event: APIGatewayProxyEvent, params) => {
   return methodName
 }
 
+const getCurrentUser = async (session) => {
+  console.log('get current user session', session)
+
+  if (!session?.id) {
+    throw new AuthError.NotLoggedInError()
+  }
+
+  let user
+
+  try {
+    // user = await this.dbAccessor.findUnique({
+    //   where: { [this.options.authFields.id]: this.session?.id },
+    //   select,
+    // })
+
+    if (session.id === 'admin') {
+      return { id: 'admin' }
+    }
+  } catch (e: any) {
+    throw new AuthError.GenericError(e.message)
+  }
+
+  if (!user) {
+    throw new AuthError.UserNotFoundError()
+  }
+
+  return user
+}
+
 export async function invoke(
   event: APIGatewayProxyEvent,
   _context,
@@ -346,14 +375,16 @@ export async function invoke(
   }
 
   const cookie = extractCookie(event)
+  console.log('---cookie', cookie)
   const decryptResult = decrypt(cookie)
+  console.log('---cookie dec', decryptResult)
 
   const prevCookie = {}
   // if there was a problem decryption the session, just return the logout
   // response immediately
   if (
-    decryptResult.ok === false &&
-    decryptResult.error instanceof AuthError.SessionDecryptionError
+    decryptResult.ok === false
+    // && decryptResult.error instanceof AuthError.SessionDecryptionError
   ) {
     return buildResponseWithCorsHeaders(
       okResponse(...logoutResponse(prevCookie)),
@@ -364,9 +395,24 @@ export async function invoke(
   const params = parseBody(event)
   // TODO
   const fns = {
-    getToken: () => {
+    getToken: async () => {
+      if (!decryptResult.data.session) {
+        // NOTE: have to return undefined so frontend does not set authenticated to true
+        // returning any obj sets it to true
+        return [undefined]
+      }
+
+      try {
+        const user = await getCurrentUser(decryptResult.data.session)
+        if (user) {
+          return [user[options.authFields.id]]
+        } else {
+          return logoutResponse(prevCookie, { error: 'Invalid token.' })
+        }
+      } catch (e) {
+        return logoutResponse(prevCookie, { error: e.message })
+      }
       // return logoutResponse(prevCookie)
-      return ['id12312312']
     },
     login: async () => {
       console.log('loggin ingggnlasdfjk')
@@ -382,10 +428,14 @@ export async function invoke(
           options.login?.errors?.flowNotEnabled || `Login flow is not enabled`
         )
       }
-      // const { username, password } = this.params
+      const { username, password: _ } = params
       // const dbUser = await this._verifyUser(username, password)
 
-      const handlerUser = await options.login.handler({ id: 'someid' })
+      if (username !== 'admin') {
+        throw new AuthError.IncorrectPasswordError(username)
+      }
+
+      const handlerUser = await options.login.handler({ id: username })
 
       if (handlerUser == null || handlerUser[options.authFields.id] == null) {
         throw new AuthError.NoUserIdError()
@@ -414,6 +464,7 @@ export async function invoke(
 
     // call whatever auth method was requested and return the body and headers
     const [body, headers, options = { statusCode: 200 }] = await fns[method]()
+    console.log('----body', body, headers, options)
 
     return buildResponseWithCorsHeaders(
       okResponse(body, headers, options),
