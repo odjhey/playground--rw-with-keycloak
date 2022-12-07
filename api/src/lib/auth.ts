@@ -18,14 +18,18 @@ import { AuthenticationError, ForbiddenError } from '@redwoodjs/graphql-server'
  * fields to the `select` object below once you've decided they are safe to be
  * seen if someone were to open the Web Inspector in their browser.
  */
-export const getCurrentUser = async (session: Decoded) => {
-  console.log('---get current user', session)
+export const getCurrentUser = async (...args) => {
+  return { id: 'johncena' }
 
-  if (!session || typeof session.id !== 'number') {
-    throw new Error('Invalid session')
-  }
+  // console.log('---get current user', args)
 
-  return undefined
+  // const session = undefined
+
+  // if (!session || typeof session.id !== 'number') {
+  //   throw new Error('Invalid session')
+  // }
+
+  // return undefined
 
   /*
   return await db.user.findUnique({

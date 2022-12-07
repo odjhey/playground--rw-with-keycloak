@@ -8,3 +8,6 @@ https://github.com/redwoodjs/redwood/blob/v3.5.0/packages/auth/src/AuthProvider.
 - client implementation can be found here
 https://github.com/redwoodjs/redwood/blob/v3.5.0/packages/auth/src/authClients/dbAuth.ts
 note that v3.5.0 has this, but recent commits looks like its gonna move to a more generic solution
+
+- decoder is not extendable, handle in getCurrentUser
+https://github.com/redwoodjs/redwood/blob/v3.5.0/packages/api/src/auth/decoders/index.ts#L47
