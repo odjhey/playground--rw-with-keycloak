@@ -2,9 +2,10 @@ import type { APIGatewayProxyEvent } from 'aws-lambda'
 import CryptoJS from 'crypto-js'
 import { v4 as uuidv4 } from 'uuid'
 
+import * as CookieHelper from './cookies'
 import { CorsConfig, CorsContext, CorsHeaders, createCorsContext } from './cors'
 import * as AuthError from './errors'
-import { decryptSession, extractCookie, getSession } from './shared'
+import { extractCookie } from './shared'
 import { normalizeRequest } from './transforms'
 
 /**
@@ -35,13 +36,7 @@ type AuthMethodNames =
   | 'webAuthnAuthenticate'
 
 export type TAuthHandlerOptions<TUser = unknown> = {
-  cookie?: {
-    Path?: string
-    HttpOnly?: boolean
-    Secure?: boolean
-    SameSite?: string
-    Domain?: string
-  }
+  cookie?: CookieHelper.TCookie
   cors?: CorsConfig
   login: LoginFlowOptions<TUser>
   authFields: {
@@ -81,10 +76,6 @@ interface LoginFlowOptions<TUser = Record<string | number, any>> {
 type SetCookieHeader = { 'set-cookie': string }
 type CsrfTokenHeader = { 'csrf-token': string }
 
-const PAST_EXPIRES_DATE = new Date(
-  '1970-01-01T00:00:00.000+00:00'
-).toUTCString()
-
 const buildResponseWithCorsHeaders = (
   response: {
     body?: string
@@ -99,22 +90,6 @@ const buildResponseWithCorsHeaders = (
       ...(response.headers || {}),
       ...corsHeaders,
     },
-  }
-}
-
-type TResult<T, E> = { ok: true; data: T } | { ok: false; error: E }
-
-const decrypt = (
-  cookie
-): TResult<
-  { session: Record<string, any>; csrfToken: string },
-  { info: { hasInvalidSession: boolean }; error: any }
-> => {
-  try {
-    const [session, csrfToken] = decryptSession(getSession(cookie))
-    return { ok: true, data: { session, csrfToken } }
-  } catch (e) {
-    return { ok: false, error: e }
   }
 }
 
@@ -144,55 +119,17 @@ const badRequestResponse = (message: string) => {
   }
 }
 
-// returns all the cookie attributes in an array with the proper expiration date
-//
-// pass the argument `expires` set to "now" to get the attributes needed to expire
-// the session, or "future" (or left out completely) to set to `futureExpiresDate`
-const cookieAttributes = ({
-  prevCookie,
-  expires = 'now',
-  options = {},
-}: {
-  prevCookie: Record<string, any>
-  expires?: 'now' | string
-  options?: TAuthHandlerOptions['cookie']
-}) => {
-  const cookieOptions = { ...prevCookie, ...options } || {
-    ...options,
-  }
-  const meta = Object.keys(cookieOptions)
-    .map((key) => {
-      const optionValue =
-        cookieOptions[key as keyof TAuthHandlerOptions['cookie']]
-
-      // Convert the options to valid cookie string
-      if (optionValue === true) {
-        return key
-      } else if (optionValue === false) {
-        return null
-      } else {
-        return `${key}=${optionValue}`
-      }
-    })
-    .filter((v) => v)
-
-  const expiresAt = expires === 'now' ? PAST_EXPIRES_DATE : expires
-  meta.push(`Expires=${expiresAt}`)
-
-  return meta
-}
-
 // encrypts a string with the SESSION_SECRET
 const encrypt = (data: string) => {
   return CryptoJS.AES.encrypt(data, process.env.SESSION_SECRET as string)
 }
 
 // get _deleteSessionHeader() {
-const deleteSessionHeader = (prevCookie) => {
+const deleteSessionHeader = (cookie: CookieHelper.TCookie) => {
   return {
     'set-cookie': [
       'session=',
-      ...cookieAttributes({ prevCookie, expires: 'now' }),
+      ...CookieHelper.toAttributes({ cookie: cookie, expires: 'now' }),
     ].join(';'),
   }
 }
@@ -208,14 +145,17 @@ const createSessionHeader = (
   const encrypted = encrypt(session)
   const cookie = [
     `session=${encrypted.toString()}`,
-    ...cookieAttributes({ prevCookie, expires: sessionExpiresDate }),
+    ...CookieHelper.toAttributes({
+      cookie: prevCookie,
+      expires: sessionExpiresDate,
+    }),
   ].join(';')
 
   return { 'set-cookie': cookie }
 }
 
 // TODO we may need to generate a new one every instance right?
-const CSRF_TOKEN = uuidv4()
+// const CSRF_TOKEN = uuidv4()
 
 const loginResponse = (
   user: Record<string, any>,
@@ -233,7 +173,7 @@ const loginResponse = (
   // TODO: this needs to go into graphql somewhere so that each request makes
   // a new CSRF token and sets it in both the encrypted session and the
   // csrf-token header
-  const csrfToken = CSRF_TOKEN
+  const csrfToken = uuidv4() // CSRF_TOKEN
 
   return [
     sessionData,
@@ -251,13 +191,13 @@ const loginResponse = (
 }
 
 const logoutResponse = (
-  prevCookie,
+  cookie: CookieHelper.TCookie,
   response?: Record<string, unknown>
 ): [string, SetCookieHeader] => {
   return [
     response ? JSON.stringify(response) : '',
     {
-      ...deleteSessionHeader(prevCookie),
+      ...deleteSessionHeader(cookie),
     },
   ]
 }
@@ -355,9 +295,18 @@ export async function invoke(
   _context,
   options: TAuthHandlerOptions
 ) {
+  // normalize input, issue 400 for malformed ones
+  //   derive cors related stuff
+  //   derive csrf related stuff
+  //   derive cookie related stuff
+  // parse
+  // exec
+
+  // standardize response shapes
+
   const request = normalizeRequest(event)
   let corsHeaders = {}
-  let corsContext: CorsContext | undefined
+  let corsContext: CorsContext
 
   if (options.cors) {
     corsContext = createCorsContext(options.cors)
@@ -374,12 +323,9 @@ export async function invoke(
     }
   }
 
-  const cookie = extractCookie(event)
-  console.log('---cookie', cookie)
-  const decryptResult = decrypt(cookie)
-  console.log('---cookie dec', decryptResult)
+  const cookiesRaw = extractCookie(event)
+  const decryptResult = CookieHelper.decrypt(cookiesRaw)
 
-  const prevCookie = {}
   // if there was a problem decryption the session, just return the logout
   // response immediately
   if (
@@ -387,10 +333,12 @@ export async function invoke(
     // && decryptResult.error instanceof AuthError.SessionDecryptionError
   ) {
     return buildResponseWithCorsHeaders(
-      okResponse(...logoutResponse(prevCookie)),
+      okResponse(...logoutResponse({})), // no cookie since was not able to decrypt
       corsHeaders
     )
   }
+
+  const cookie = decryptResult.data.session
 
   const params = parseBody(event)
   // TODO
@@ -407,10 +355,10 @@ export async function invoke(
         if (user) {
           return [user[options.authFields.id]]
         } else {
-          return logoutResponse(prevCookie, { error: 'Invalid token.' })
+          return logoutResponse(cookie, { error: 'Invalid token.' })
         }
       } catch (e) {
-        return logoutResponse(prevCookie, { error: e.message })
+        return logoutResponse(cookie, { error: e.message })
       }
       // return logoutResponse(prevCookie)
     },
@@ -445,7 +393,7 @@ export async function invoke(
         handlerUser,
         options.authFields,
         sessionExpiresDate,
-        prevCookie
+        cookie
       )
     },
   }

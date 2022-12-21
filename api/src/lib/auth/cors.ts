@@ -14,7 +14,7 @@ export type CorsConfig = {
 export type CorsHeaders = Record<string, string>
 export type CorsContext = ReturnType<typeof createCorsContext>
 
-export function createCorsContext(cors: CorsConfig | undefined) {
+export function createCorsContext(cors: CorsConfig) {
   // Taken from apollo-server-env
   // @see: https://github.com/apollographql/apollo-server/blob/9267a79b974e397e87ad9ee408b65c46751e4565/packages/apollo-server-env/src/polyfills/fetch.js#L1
   const corsHeaders = new Headers()
@@ -63,7 +63,7 @@ export function createCorsContext(cors: CorsConfig | undefined) {
       return request.method === 'OPTIONS'
     },
     getRequestHeaders(request: Request): CorsHeaders {
-      const eventHeaders = new Headers(request.headers as HeadersInit)
+      const eventHeaders = new Headers(request.headers)
       const requestCorsHeaders = new Headers(corsHeaders)
 
       if (cors && cors.origin) {

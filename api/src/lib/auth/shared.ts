@@ -2,20 +2,22 @@ import type { APIGatewayProxyEvent } from 'aws-lambda'
 import CryptoJS from 'crypto-js'
 
 import * as DbAuthError from './errors'
+import { jsonSafeParse } from './utils'
 
 // Extracts the cookie from an event, handling lower and upper case header
 // names.
 // Checks for cookie in headers in dev when user has generated graphiql headers
-export const extractCookie = (event: APIGatewayProxyEvent) => {
+export const extractCookie = (event: APIGatewayProxyEvent): string => {
   let cookieFromGraphiqlHeader
   if (process.env.NODE_ENV === 'development') {
-    try {
-      cookieFromGraphiqlHeader = JSON.parse(event.body ?? '{}').extensions
-        ?.headers?.cookie
-    } catch (e) {
+    const result = jsonSafeParse<Record<any, any>>(event.body)
+    if (result.ok === false) {
       return event.headers.cookie || event.headers.Cookie
     }
+
+    cookieFromGraphiqlHeader = result.data?.extensions?.headers?.cookie
   }
+
   return (
     event.headers.cookie || event.headers.Cookie || cookieFromGraphiqlHeader
   )
